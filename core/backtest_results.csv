@@ -1,0 +1,5 @@
+Strategy,Total Trades,Win Rate (%),Profit Factor,Max Drawdown (%),Final Balance ($)
+Baseline - 30m,0,0,0,0.0,10000
+SMD - 30m,0,0,0,0.0,10000
+Baseline - 1h,0,0,0,0.0,10000
+SMD - 1h,0,0,0,0.0,10000

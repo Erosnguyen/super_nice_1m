@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  data_service:
+    build: 
+      context: ./data
+      dockerfile: Dockerfile
+    ports:
+      - "5001:5001"
+    networks:
+      - trading_network
+    restart: always
+
+  strategy_service:
+    build: 
+      context: ./strategy
+      dockerfile: Dockerfile
+    ports:
+      - "5002:5002"
+    networks:
+      - trading_network
+    depends_on:
+      - data_service
+    restart: always
+
+  visualization_service:
+    build: 
+      context: ./visualize
+      dockerfile: Dockerfile
+    ports:
+      - "5003:5003"
+    networks:
+      - trading_network
+    depends_on:
+      - strategy_service
+    restart: always
+
+  account_service:
+    build: ./account
+    ports:
+      - "5004:5004"
+    networks:
+      - trading_network
+    env_file:
+      - ./account/.env 
+    depends_on:
+      - strategy_service
+
+networks:
+  trading_network:
+    driver: bridge
