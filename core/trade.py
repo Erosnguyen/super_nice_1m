@@ -89,6 +89,7 @@ def multi_strategy_trading(df):
     df = calculate_order_blocks(df)
     df = calculate_market_structure(df)
     df = calculate_liquidity_zones(df) 
+    df = calculate_smart_money_divergence(df) 
     buy_signals = []
     sell_signals = []
     position = None
@@ -114,6 +115,24 @@ def multi_strategy_trading(df):
             position = "SELL"
 
     return buy_signals, sell_signals
+def calculate_smart_money_divergence(df):
+    """Detect Smart Money Divergence (SMD) using RSI and OBV divergence"""
+
+    # ✅ RSI-Based Divergence
+    df["RSI_High"] = df["RSI"].rolling(14).max()
+    df["RSI_Low"] = df["RSI"].rolling(14).min()
+    
+    # ✅ OBV Calculation (Institutional Volume)
+    df["OBV"] = (df["volume"] * ((df["close"] > df["close"].shift(1)) * 2 - 1)).cumsum()
+    df["OBV_Trend"] = df["OBV"].rolling(14).mean()
+
+    # ✅ Detect Bearish Divergence (Price makes Higher High, RSI makes Lower High)
+    df["Bearish_Divergence"] = (df["high"] > df["high"].shift(1)) & (df["RSI"] < df["RSI"].shift(1))
+
+    # ✅ Detect Bullish Divergence (Price makes Lower Low, RSI makes Higher Low)
+    df["Bullish_Divergence"] = (df["low"] < df["low"].shift(1)) & (df["RSI"] > df["RSI"].shift(1))
+
+    return df
 
 # 📈 Plot with Buy/Sell Signals
 def plot_candlestick_with_signals(df, title, buy_signals, sell_signals):
@@ -144,19 +163,30 @@ def plot_candlestick_with_signals(df, title, buy_signals, sell_signals):
         name="Sell Signal"
     ), row=1, col=1)
 
-    # ✅ Highlight Liquidity Grabs
-    liquidity_grabs = df[df["Liquidity_Grab_High"] | df["Liquidity_Grab_Low"]]
+    # ✅ Highlight Smart Money Divergence Areas
+    bullish_div = df[df["Bullish_Divergence"]]
+    bearish_div = df[df["Bearish_Divergence"]]
+
     fig.add_trace(go.Scatter(
-        x=liquidity_grabs["timestamp"],
-        y=liquidity_grabs["high"],
+        x=bullish_div["timestamp"],
+        y=bullish_div["low"],
         mode="markers",
-        marker=dict(symbol="circle", size=10, color="yellow"),
-        name="Liquidity Grab"
+        marker=dict(symbol="circle", size=10, color="blue"),
+        name="Bullish Divergence"
+    ), row=1, col=1)
+
+    fig.add_trace(go.Scatter(
+        x=bearish_div["timestamp"],
+        y=bearish_div["high"],
+        mode="markers",
+        marker=dict(symbol="circle", size=10, color="orange"),
+        name="Bearish Divergence"
     ), row=1, col=1)
 
     fig.add_trace(go.Bar(x=df["timestamp"], y=df["volume"], name="Volume"), row=2, col=1)
     fig.update_layout(title=title, template="plotly_dark", height=800)
     fig.show()
+
 
 
 # ✅ Run
