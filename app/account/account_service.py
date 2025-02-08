@@ -6,6 +6,7 @@ import os
 from binance import ThreadedWebsocketManager
 from binance.enums import SIDE_BUY, SIDE_SELL, ORDER_TYPE_MARKET
 from binance.client import Client
+from binance_fees import get_futures_fee  # ✅ Import Binance Fees
 
 # ✅ Use Binance Testnet API for Mock Trading
 API_KEY = "a44d949f9e99e9cbb49bfb15d368524454dbe3032d4001fb6c75eb932f5dd001"
@@ -23,9 +24,9 @@ twm = None  # WebSocket instance
 
 # ✅ Account & Risk Management Parameters
 MAX_RISK_PER_TRADE = 0.02  # Risk per trade (2% of account balance)
-MIN_MARGIN_THRESHOLD = 0.15  # If margin balance < 15% of total balance, reduce positions
+MIN_MARGIN_THRESHOLD = 0.15  # Reduce positions if margin balance < 15%
+HEDGE_THRESHOLD = 0.10  # Open hedge trade if margin < 10%
 RISK_REWARD_RATIO = 2  # 2:1 RR for TP/SL
-HEDGE_THRESHOLD = 0.10  # If margin balance is <10%, open hedge trade
 
 # ✅ Store Open Positions
 positions = {}
@@ -45,7 +46,7 @@ def get_account_balance():
         return 0, 0, 0
 
 def get_open_positions():
-    """Fetch currently open positions from Binance Testnet Futures."""
+    """Fetch open positions and dynamically adjust TP & SL based on account balance and trading fees."""
     global positions
     positions.clear()
     try:
@@ -53,20 +54,24 @@ def get_open_positions():
         total_balance, margin_balance, _ = get_account_balance()
 
         for pos in account_info["positions"]:
-            if float(pos["positionAmt"]) != 0:  # Only track open positions
+            if float(pos["positionAmt"]) != 0:
                 symbol = pos["symbol"]
                 entry_price = float(pos["entryPrice"])
                 positionAmt = float(pos["positionAmt"])
 
-                # ✅ Adjust TP & SL dynamically based on account balance
-                dynamic_rr = min(RISK_REWARD_RATIO, (margin_balance / total_balance) * 10)  # Scale RR if low balance
+                # ✅ Get Binance Fees
+                maker_fee, taker_fee = get_futures_fee(symbol)
+                total_fee_percent = (taker_fee * 2)  # Entry & Exit fee
+
+                # ✅ Adjust TP & SL dynamically with correct RR
+                dynamic_rr = min(RISK_REWARD_RATIO, (margin_balance / total_balance) * 10)
                 
                 if positionAmt > 0:  # Long (BUY)
-                    tp_price = entry_price + (entry_price * dynamic_rr / 100)
-                    sl_price = entry_price - (entry_price * (dynamic_rr / 2) / 100)
+                    tp_price = entry_price * (1 + total_fee_percent + (dynamic_rr / 100))
+                    sl_price = entry_price * (1 - total_fee_percent - ((dynamic_rr / 2) / 100))
                 else:  # Short (SELL)
-                    tp_price = entry_price - (entry_price * dynamic_rr / 100)
-                    sl_price = entry_price + (entry_price * (dynamic_rr / 2) / 100)
+                    tp_price = entry_price * (1 - total_fee_percent - (dynamic_rr / 100))
+                    sl_price = entry_price * (1 + total_fee_percent + ((dynamic_rr / 2) / 100))
 
                 positions[symbol] = {
                     "positionAmt": positionAmt,
@@ -75,7 +80,7 @@ def get_open_positions():
                     "slPrice": sl_price
                 }
         
-        logger.info(f"📊 Tracked Positions: {positions}")
+        logger.info(f"📊 Updated Positions with Fees: {positions}")
 
     except Exception as e:
         logger.error(f"❌ Error fetching positions: {e}")
@@ -85,7 +90,7 @@ def close_position(symbol, side, reduce_only=True):
     try:
         order = client.futures_create_order(
             symbol=symbol,
-            side=SIDE_SELL if side == SIDE_BUY else SIDE_BUY,  # Close in opposite direction
+            side=SIDE_SELL if side == SIDE_BUY else SIDE_BUY,  # Close opposite direction
             type=ORDER_TYPE_MARKET,
             quantity=abs(float(positions[symbol]["positionAmt"])),  # Close full position
             reduceOnly=reduce_only  # Ensure this is a closing trade
