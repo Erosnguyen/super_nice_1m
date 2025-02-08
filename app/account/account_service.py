@@ -21,9 +21,8 @@ client = Client(API_KEY, API_SECRET, testnet=True)
 # ✅ WebSocket-Based Position Tracking
 twm = None  # WebSocket instance
 
-# ✅ Set Take Profit (TP) and Stop Loss (SL) Levels
-TP_PERCENT = 5  # Take profit at +5%
-SL_PERCENT = 3  # Stop loss at -3%
+# ✅ Risk-Reward Ratio (RR)
+RISK_REWARD_RATIO = 2  # Example: 2:1 RR
 
 # ✅ Store Open Positions
 positions = {}
@@ -37,10 +36,22 @@ def get_open_positions():
         for pos in account_info["positions"]:
             if float(pos["positionAmt"]) != 0:  # Only track open positions
                 symbol = pos["symbol"]
+                entry_price = float(pos["entryPrice"])
+                positionAmt = float(pos["positionAmt"])
+
+                # ✅ Calculate TP & SL using Risk-Reward Ratio
+                if positionAmt > 0:  # Long (BUY)
+                    tp_price = entry_price + (entry_price * RISK_REWARD_RATIO / 100)
+                    sl_price = entry_price - (entry_price * (RISK_REWARD_RATIO / 2) / 100)
+                else:  # Short (SELL)
+                    tp_price = entry_price - (entry_price * RISK_REWARD_RATIO / 100)
+                    sl_price = entry_price + (entry_price * (RISK_REWARD_RATIO / 2) / 100)
+
                 positions[symbol] = {
-                    "positionAmt": float(pos["positionAmt"]),
-                    "entryPrice": float(pos["entryPrice"]),
-                    "unrealizedProfit": float(pos.get("unRealizedProfit", 0))  # ✅ FIXED
+                    "positionAmt": positionAmt,
+                    "entryPrice": entry_price,
+                    "tpPrice": tp_price,
+                    "slPrice": sl_price
                 }
         logger.info(f"📊 Tracked Positions: {positions}")
     except Exception as e:
@@ -68,27 +79,20 @@ def handle_message(msg):
             positionAmt = float(position["pa"])  # Position amount
             entryPrice = float(position["ep"]) if "ep" in position else None
 
-            # ✅ Fix: Fetch Latest Price if `mp` is Missing or 0.0
+            # ✅ Fetch Latest Market Price
             marketPrice = float(position.get("mp", 0))
-            if marketPrice == 0.0:  # If `mp` is 0.0, fetch latest price
+            if marketPrice == 0.0:
                 ticker = client.futures_mark_price(symbol=symbol)
                 marketPrice = float(ticker["markPrice"])
                 logger.info(f"🔄 Updated Market Price for {symbol}: {marketPrice}")
 
-            # 🔍 Debugging: Check if entryPrice and positionAmt exist
-            logger.debug(f"🔍 {symbol} - PositionAmt: {positionAmt}, EntryPrice: {entryPrice}")
-
             if symbol in positions and entryPrice is not None and positionAmt != 0:
-                if positionAmt > 0:  # ✅ Long Position (BUY)
-                    tp_price = entryPrice * (1 + TP_PERCENT / 100)
-                    sl_price = entryPrice * (1 - SL_PERCENT / 100)
-                else:  # ✅ Short Position (SELL)
-                    tp_price = entryPrice * (1 - TP_PERCENT / 100)
-                    sl_price = entryPrice * (1 + SL_PERCENT / 100)
+                tp_price = positions[symbol]["tpPrice"]
+                sl_price = positions[symbol]["slPrice"]
 
                 logger.info(f"📊 {symbol}: Market Price = {marketPrice}, TP = {tp_price}, SL = {sl_price}")
 
-                # ✅ Fix: Only Close When a Real TP/SL Condition is Met
+                # ✅ Check TP & SL Conditions
                 if (positionAmt > 0 and marketPrice >= tp_price) or (positionAmt < 0 and marketPrice <= tp_price):
                     logger.info(f"🎯 TAKE PROFIT HIT for {symbol} at {marketPrice}")
                     close_position(symbol, positionAmt)
@@ -96,10 +100,6 @@ def handle_message(msg):
                 elif (positionAmt > 0 and marketPrice <= sl_price) or (positionAmt < 0 and marketPrice >= sl_price):
                     logger.info(f"⛔ STOP LOSS HIT for {symbol} at {marketPrice}")
                     close_position(symbol, positionAmt)
-            else:
-                logger.warning(f"⚠️ {symbol} is missing entryPrice or positionAmt is zero, skipping TP/SL check.")
-
-
 
 def start_websocket():
     """Start Binance WebSocket for real-time account updates."""
@@ -110,7 +110,6 @@ def start_websocket():
     logger.info("🚀 WebSocket started. Listening for account updates...")
     
     twm.start_futures_user_socket(callback=handle_message)  # ✅ Ensure it's tracking futures
-
 
 # ✅ FIX: Run WebSocket in a separate thread
 if __name__ == "__main__":
